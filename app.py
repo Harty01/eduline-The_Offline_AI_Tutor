@@ -16,8 +16,11 @@ st.set_page_config(
     page_icon="logo_favicon1.png",
     layout="centered",
 )
+import os
+BASE_DIR = os.path.dirname(__file__)
+QUESTIONS_CSV = os.path.join(BASE_DIR, "questions_clus8.csv")
 
-QUESTIONS_CSV = "questions_clus8.csv"   # your question file
+# QUESTIONS_CSV = "questions_clus8.csv"   # your question file
 DB_PATH = "eduline.db"
 DEFAULT_TOTAL_Q = 5
 CLUSTER_LIMITS = {"English": 7, "Mathematics": 8}
