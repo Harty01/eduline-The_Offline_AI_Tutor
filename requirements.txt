@@ -1,7 +1,4 @@
-gradio
+
 pandas
-numpy
-scikit-learn
-joblib
-pickel
+
 streamlit
