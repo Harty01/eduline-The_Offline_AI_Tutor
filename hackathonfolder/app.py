@@ -17,7 +17,9 @@ st.set_page_config(
     layout="centered",
 )
 
-QUESTIONS_CSV = "questions_clus8.csv"   # your question file
+import os
+BASE_DIR = os.path.dirname(__file__)
+QUESTIONS_CSV = os.path.join(BASE_DIR, "questions_clus8.csv")   # your question file
 DB_PATH = "eduline.db"
 DEFAULT_TOTAL_Q = 5
 CLUSTER_LIMITS = {"English": 7, "Mathematics": 8}
@@ -406,3 +408,4 @@ elif app["stage"] == "finished":
         if st.button("Choose Another Subject"):
             app["stage"] = "subject"
             st.rerun()
+
