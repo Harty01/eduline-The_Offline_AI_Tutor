@@ -8,6 +8,8 @@ import uuid
 from datetime import datetime
 from typing import Dict, List
 
+pip install qrcode
+
 import qrcode
 from PIL import Image
 import streamlit as st
@@ -422,5 +424,6 @@ elif app["stage"] == "finished":
         if st.button("Choose Another Subject"):
             app["stage"] = "subject"
             st.rerun()
+
 
 
