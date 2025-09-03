@@ -9,20 +9,6 @@ from datetime import datetime
 from typing import Dict, List
 
 
-import qrcode
-from PIL import Image
-import streamlit as st
-
-# Replace with your app's URL
-app_url = "https://eduline-theofflineaitutor-7rauupkhmlxuedembpcpfg.streamlit.app/"
-
-# Generate QR code
-qr = qrcode.make(app_url)
-
-# Display in app
-st.image(qr, caption="Scan this QR to open the app")
-
-
 # ==============================
 # Config
 # ==============================
@@ -423,6 +409,7 @@ elif app["stage"] == "finished":
         if st.button("Choose Another Subject"):
             app["stage"] = "subject"
             st.rerun()
+
 
 
 
