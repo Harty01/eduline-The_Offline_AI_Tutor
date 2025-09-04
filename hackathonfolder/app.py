@@ -5,10 +5,13 @@ import random
 import sqlite3
 import json
 import uuid
-import os
 from datetime import datetime
-from typing import List
-from streamlit_autorefresh import st_autorefresh
+from typing import Dict, List
+
+
+
+
+
 
 # ==============================
 # Config
@@ -18,9 +21,11 @@ st.set_page_config(
     page_icon="logo_favicon1.png",
     layout="centered",
 )
-
+import os
 BASE_DIR = os.path.dirname(__file__)
 QUESTIONS_CSV = os.path.join(BASE_DIR, "questions_clus8.csv")
+
+# QUESTIONS_CSV = "questions_clus8.csv"   # your question file
 DB_PATH = "eduline.db"
 DEFAULT_TOTAL_Q = 5
 CLUSTER_LIMITS = {"English": 7, "Mathematics": 8}
@@ -37,8 +42,6 @@ def init_db(path=DB_PATH):
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             student_uuid TEXT UNIQUE,
             name TEXT,
-            phone TEXT,
-            email TEXT,
             area TEXT,
             created_at TEXT
         )
@@ -58,11 +61,11 @@ def init_db(path=DB_PATH):
     conn.commit()
     return conn
 
-def insert_user(conn, student_uuid: str, name: str, phone: str, email: str, area: str):
+def insert_user(conn, student_uuid: str, name: str, area: str):
     cur = conn.cursor()
     cur.execute("""
-        INSERT INTO users (student_uuid, name, phone, email, area, created_at) VALUES (?, ?, ?, ?, ?, ?)
-    """, (student_uuid, name, phone, email, area, datetime.now().isoformat()))
+        INSERT INTO users (student_uuid, name, area, created_at) VALUES (?, ?, ?, ?)
+    """, (student_uuid, name, area, datetime.now().isoformat()))
     conn.commit()
 
 def save_result(conn, student_uuid: str, subject: str, score: int, total_questions: int, progress: float, weak_clusters: dict):
@@ -82,6 +85,7 @@ conn = init_db(DB_PATH)
 @st.cache_data
 def load_questions(path):
     df = pd.read_csv(path)
+    # Ensure Cluster is integer and Subject exists
     df["Cluster"] = df["Cluster"].astype(int)
     return df
 
@@ -92,11 +96,9 @@ df_all = load_questions(QUESTIONS_CSV)
 # ==============================
 if "app" not in st.session_state:
     st.session_state.app = {
-        "stage": "register",
+        "stage": "register",   # register -> subject -> quiz -> finished
         "student_uuid": None,
         "name": "",
-        "phone": "",
-        "email": "",
         "area": "",
     }
 
@@ -108,32 +110,28 @@ if "quiz" not in st.session_state:
         "question_index": 0,
         "total_questions": DEFAULT_TOTAL_Q,
         "score": 0,
-        "used_indices": [],
+        "used_indices": [],      # store row indices used (integers)
         "current_question": None,
         "submitted": False,
         "feedback": "",
-        "weak_clusters": {},
-        "mode": "normal",
+        "weak_clusters": {},     # {cluster_id: mistakes}
+        "mode": "normal",        # normal | weak_only
         "weak_only_list": [],
-        "cluster_name_map": {},
-        "time_left": 0,
-        "last_tick": None,
-        "enable_timer": True
+        "cluster_name_map": {}   # user-provided topic names
     }
 
 app = st.session_state.app
 quiz = st.session_state.quiz
 
 # ==============================
-# Helpers
+# Helpers: ID, quiz logic, cluster names
 # ==============================
 def gen_uuid() -> str:
     return "EDU-" + str(uuid.uuid4())[:8].upper()
 
-def reset_quiz_state(subject: str, total_q: int, mode: str = "normal", weak_only_list: List[int] = None, enable_timer=True):
+def reset_quiz_state(subject: str, total_q: int, mode: str = "normal", weak_only_list: List[int] = None):
     mid = CLUSTER_LIMITS.get(subject, 6) // 2
     start_cluster = mid if mode == "normal" else (weak_only_list[0] if weak_only_list else mid)
-    total_time = total_q * 15  # 15 sec per Q, continuous
     quiz.update({
         "started": True,
         "subject": subject,
@@ -145,19 +143,18 @@ def reset_quiz_state(subject: str, total_q: int, mode: str = "normal", weak_only
         "current_question": None,
         "submitted": False,
         "feedback": "",
-        "weak_clusters": {} if mode == "normal" else {c: 0 for c in (weak_only_list or [])},
+        "weak_clusters": {} if mode == "normal" else {c:0 for c in (weak_only_list or [])},
         "mode": mode,
-        "weak_only_list": weak_only_list or [],
-        "time_left": total_time if enable_timer else 0,
-        "last_tick": datetime.now(),
-        "enable_timer": enable_timer
+        "weak_only_list": weak_only_list or []
     })
 
 def get_cluster_name(subject: str, cluster_id: int) -> str:
+    # Use mapping in quiz["cluster_name_map"] if provided, else default friendly names
     mapping = quiz.get("cluster_name_map", {})
     key = f"{subject}_{cluster_id}"
     if key in mapping and mapping[key].strip():
         return mapping[key].strip()
+    # default generic names by difficulty
     defaults = {
         1: "Foundations",
         2: "Basics",
@@ -172,6 +169,7 @@ def get_cluster_name(subject: str, cluster_id: int) -> str:
 
 def load_next_question():
     df_subj = df_all[df_all["Subject"] == quiz["subject"]].reset_index(drop=True)
+    # if mode is weak_only, restrict cluster choices
     target_cluster = quiz["cluster"]
     if quiz["mode"] == "weak_only" and quiz["weak_only_list"]:
         if target_cluster not in quiz["weak_only_list"]:
@@ -180,6 +178,7 @@ def load_next_question():
 
     subset = df_subj[df_subj["Cluster"] == target_cluster].drop(quiz["used_indices"], errors="ignore")
     if subset.empty:
+        # fallback to other weak clusters in weak_only mode, else any remaining
         if quiz["mode"] == "weak_only" and quiz["weak_only_list"]:
             subset = df_subj[df_subj["Cluster"].isin(quiz["weak_only_list"])].drop(quiz["used_indices"], errors="ignore")
         else:
@@ -190,7 +189,7 @@ def load_next_question():
 
     q = subset.sample(1).iloc[0]
     quiz["current_question"] = q
-    quiz["used_indices"].append(q.name)
+    quiz["used_indices"].append(q.name)  # index in df_subj after reset_index
     quiz["submitted"] = False
     quiz["feedback"] = ""
     return True
@@ -202,7 +201,7 @@ def submit_answer(choice_key: str):
     if choice_key == correct:
         quiz["score"] += 1
         if quiz["mode"] == "normal":
-            quiz["cluster"] = min(CLUSTER_LIMITS.get(quiz["subject"], quiz["cluster"] + 1), quiz["cluster"] + 1)
+            quiz["cluster"] = min(CLUSTER_LIMITS.get(quiz["subject"], quiz["cluster"]+1), quiz["cluster"] + 1)
         quiz["feedback"] = "✅ Correct! Great job."
     else:
         if quiz["mode"] == "normal":
@@ -212,30 +211,30 @@ def submit_answer(choice_key: str):
     quiz["submitted"] = True
 
 def finish_and_record():
+    # Save results to DB
     progress_ratio = quiz["question_index"] / max(1, quiz["total_questions"])
     try:
         save_result(conn, app["student_uuid"], quiz["subject"], quiz["score"], quiz["total_questions"], progress_ratio, quiz["weak_clusters"])
     except Exception as e:
         st.warning(f"Could not save results to DB: {e}")
+
     quiz["started"] = False
     app["stage"] = "finished"
 
 # ==============================
-# UI: Header
+# UI: Top header
 # ==============================
 st.title("🎓 EDULINE")
 st.subheader("The Offline AI Tutor")
 
+# Optional: show small student info summary on sidebar if registered
 if app.get("student_uuid"):
     st.sidebar.markdown(f"**Student ID:** {app['student_uuid']}")
     if app.get("name"):
         st.sidebar.markdown(f"**Name:** {app['name']}")
-    if app.get("phone"):
-        st.sidebar.markdown(f"**Phone:** {app['phone']}")
-    if app.get("email"):
-        st.sidebar.markdown(f"**Email:** {app['email']}")
     if app.get("area"):
         st.sidebar.markdown(f"**Area:** {app['area']}")
+    # allow viewing past results
     if st.sidebar.button("Show my past results"):
         try:
             df_results = pd.read_sql_query("SELECT * FROM results WHERE student_uuid=?", conn, params=(app['student_uuid'],))
@@ -254,16 +253,17 @@ if app["stage"] == "register":
     col1, col2 = st.columns(2)
     with col1:
         name = st.text_input("Name (optional)", value=app.get("name", ""))
-        phone = st.text_input("Phone (optional)", value=app.get("phone", ""))
     with col2:
-        email = st.text_input("Email (optional)", value=app.get("email", ""))
         area = st.radio("Where do you live?", ["Urban", "Rural"], index=0 if app.get("area","Urban") == "Urban" else 1)
 
     if st.button("Create Student ID"):
         student_uuid = gen_uuid()
-        app.update({"student_uuid": student_uuid, "name": name.strip(), "phone": phone.strip(), "email": email.strip(), "area": area})
+        app["student_uuid"] = student_uuid
+        app["name"] = name.strip()
+        app["area"] = area
+        # insert into DB
         try:
-            insert_user(conn, student_uuid, app["name"], app["phone"], app["email"], app["area"])
+            insert_user(conn, student_uuid, app["name"], app["area"])
         except Exception as e:
             st.warning(f"Could not save registration: {e}")
         st.success(f"Registered! Your Student ID is: **{student_uuid}**")
@@ -271,19 +271,21 @@ if app["stage"] == "register":
         st.rerun()
 
 # ==============================
-# STAGE: Subject selection
+# STAGE: Subject selection & cluster-name overrides
 # ==============================
 elif app["stage"] == "subject":
-    st.markdown(f"#### Welcome{', ' + app['name'] if app.get('name') else ''}! (ID: **{app['student_uuid']}**)")
-
+    st.markdown(f"#### Welcome{', ' + app['name'] if app.get('name') else ''}! (ID: **{app['student_uuid']}**, Area: **{app['area']}**)")
     subject = st.selectbox("Select subject:", options=sorted(df_all["Subject"].unique()))
     total_q = st.slider("How many questions this round?", 3, 20, DEFAULT_TOTAL_Q)
-    enable_timer = st.checkbox("Enable Timer?", True)
 
+
+    # show controls
     col1, col2 = st.columns(2)
     with col1:
         if st.button("Start Adaptive Quiz"):
-            reset_quiz_state(subject, total_q, mode="normal", enable_timer=enable_timer)
+            # save mapping in session
+
+            reset_quiz_state(subject, total_q, mode="normal")
             app["stage"] = "quiz"
             st.rerun()
     with col2:
@@ -292,7 +294,9 @@ elif app["stage"] == "subject":
             if not weak_list:
                 st.info("No recorded weak areas yet. Try a normal quiz first.")
             else:
-                reset_quiz_state(subject, total_q, mode="weak_only", weak_only_list=weak_list, enable_timer=enable_timer)
+                # weak-only uses same subject
+                quiz["cluster_name_map"].update(cluster_map_local)
+                reset_quiz_state(subject, total_q, mode="weak_only", weak_only_list=weak_list)
                 app["stage"] = "quiz"
                 st.rerun()
 
@@ -308,67 +312,76 @@ elif app["stage"] == "quiz":
     st.markdown(f"#### Subject: **{quiz['subject']}**")
     st.caption(f"Mode: {'Weak-only' if quiz['mode']=='weak_only' else 'Adaptive'} | Student ID: {app['student_uuid']}")
 
+    # load next question if needed
     if quiz["current_question"] is None:
         ok = load_next_question()
         if not ok:
-            st.warning("No more questions available.")
+            st.warning("No more questions available for this subject/mode.")
             finish_and_record()
             st.rerun()
 
-    # Continuous timer
-    if quiz.get("enable_timer", False):
-        st_autorefresh(interval=1000, key="timer_refresh")
-        now = datetime.now()
-        elapsed = (now - quiz.get("last_tick", now)).total_seconds()
-        if elapsed >= 1:
-            quiz["time_left"] -= int(elapsed)
-            quiz["last_tick"] = now
-        if quiz["time_left"] <= 0:
-            st.warning("⏰ Time’s up! Auto-submitting your quiz...")
-            finish_and_record()
-            st.rerun()
-        mins, secs = divmod(quiz["time_left"], 60)
-        st.sidebar.markdown(f"⏳ **Time Left:** {mins:02d}:{secs:02d}")
-
-    # Progress
+    # Progress bar (no percentage text)
     progress_ratio = quiz["question_index"] / quiz["total_questions"]
     st.progress(progress_ratio)
     st.write(f"Question {quiz['question_index'] + 1} of {quiz['total_questions']}")
 
     q = quiz["current_question"]
+    # Display friendly cluster name
     friendly_name = get_cluster_name(quiz["subject"], quiz["cluster"])
     st.info(f"Topic: **{friendly_name}** (Cluster {quiz['cluster']})")
     st.markdown(q["Question"])
 
     options = {"A": q["Option A"], "B": q["Option B"], "C": q["Option C"], "D": q["Option D"]}
-    choice = st.radio("Choose answer:", options=list(options.keys()), format_func=lambda k: f"{k}. {options[k]}", key=f"choice_{quiz['question_index']}")
+    choice = st.radio("Choose answer:", options=list(options.keys()),
+                      format_func=lambda k: f"{k}. {options[k]}",
+                      key=f"choice_{quiz['question_index']}")
 
-    col1, col2, col3 = st.columns([1, 1, 1])
+    col1, col2, col3 = st.columns([1,1,1])
     with col1:
         if st.button("Submit Answer"):
             submit_answer(choice)
             st.rerun()
     with col2:
         if st.button("Quit Quiz"):
+            # save partial progress and finish
             finish_and_record()
-            st.warning("You quit the quiz early. Progress saved.")
+            st.warning("You quit the quiz early. Your progress is saved.")
             st.rerun()
     with col3:
         if st.button("Restart Quiz"):
+            # reset to subject selection stage but keep registration
+            quiz.update({
+                "started": False,
+                "subject": None,
+                "cluster": 0,
+                "question_index": 0,
+                "total_questions": DEFAULT_TOTAL_Q,
+                "score": 0,
+                "used_indices": [],
+                "current_question": None,
+                "submitted": False,
+                "feedback": "",
+                "weak_clusters": {},
+                "mode": "normal",
+                "weak_only_list": []
+            })
             app["stage"] = "subject"
-            quiz["started"] = False
             st.rerun()
 
+    # After submitting
     if quiz["submitted"]:
         if "✅" in quiz["feedback"]:
             st.success(quiz["feedback"])
         else:
             st.error(quiz["feedback"])
+
+        # Next or finish
         if st.button("Next Question"):
             quiz["question_index"] += 1
             quiz["current_question"] = None
             quiz["submitted"] = False
             quiz["feedback"] = ""
+            # If done
             if quiz["question_index"] >= quiz["total_questions"]:
                 finish_and_record()
             st.rerun()
@@ -380,7 +393,7 @@ elif app["stage"] == "finished":
     st.balloons()
     st.subheader("🎓 Quiz Completed!")
     st.write(f"**Final Score:** {quiz['score']} / {quiz['total_questions']}")
-    st.progress(1.0)
+    st.progress(1.0)  # fully filled bar
 
     if quiz["weak_clusters"]:
         st.markdown("### ⚠ Weak Areas")
