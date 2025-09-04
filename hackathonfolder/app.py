@@ -96,9 +96,11 @@ df_all = load_questions(QUESTIONS_CSV)
 # ==============================
 if "app" not in st.session_state:
     st.session_state.app = {
-        "stage": "register",   # register -> subject -> quiz -> finished
+       "stage": "register",
         "student_uuid": None,
         "name": "",
+        "phone": "",
+        "email": "",
         "area": "",
     }
 
@@ -414,3 +416,4 @@ elif app["stage"] == "finished":
         if st.button("Choose Another Subject"):
             app["stage"] = "subject"
             st.rerun()
+
